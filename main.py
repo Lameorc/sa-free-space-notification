@@ -1,7 +1,8 @@
 import argparse
 import ctypes
-import sys
+import logging
 import time
+from tkinter import *
 
 from bs4 import BeautifulSoup as bs
 from selenium import webdriver
@@ -12,9 +13,39 @@ DESTINATION_URLS = {
     "brno": "https://jizdenky.regiojet.cz/Booking/from/17655001/to/10204002/tarif/CZECH_STUDENT_PASS_26/departure/{}/retdep/{}/return/false"
 }
 
+logger = logging.getLogger('main')
+fh = logging.FileHandler('last_run.log')
+fh.setLevel(logging.DEBUG)
+ch = logging.StreamHandler()
+ch.setLevel(logging.DEBUG)
+logger.addHandler(fh)
+logger.addHandler(ch)
 
-def Mbox(title, text, style=0):
+
+def mBox(title, text, style=0):
     return ctypes.windll.user32.MessageBoxW(0, text, title, style)
+
+
+def tkiner_mbox(title, msg):
+    root = Tk()
+    label = Label(root, text=msg, padx=5, pady=5)
+    label.pack()
+
+    button = Button(root, text="ok", command=lambda: root.destroy())
+    button.pack()
+
+    root.lift()
+    root.attributes('-topmost', True)
+    root.after_idle(root.attributes, '-topmost', False)
+
+    root.update_idletasks()
+    width = root.winfo_width()
+    height = root.winfo_height()
+    x = (root.winfo_screenwidth() // 2) - (width // 2)
+    y = (root.winfo_screenheight() // 2) - (height // 2)
+    root.geometry('{}x{}+{}+{}'.format(width, height, x, y))
+    root.wm_title("SA scraping")
+    root.mainloop()
 
 
 class Renderer():
@@ -22,14 +53,15 @@ class Renderer():
         self.url = url
         chrome_options = Options()
         chrome_options.add_argument("--headless")
-        self.driver = webdriver.Chrome(executable_path="e:\\Data\\selenium\\chromedriver.exe",
-                                       chrome_options=chrome_options)
-        self.driver.get(url=url)
-        self.html = self.driver.page_source
+        self.__driver = webdriver.Chrome(executable_path="e:\\Data\\selenium\\chromedriver.exe",
+                                         chrome_options=chrome_options)
 
     def html(self):
-        self.driver.close()
-        return self.html
+        self.__driver.get(self.url)
+        return self.__driver.page_source
+
+    def __del__(self):
+        self.__driver.close()
 
 
 class Connection():
@@ -45,8 +77,8 @@ def retrieve_connections(date, destination):
     """
     connections = []
     url = DESTINATION_URLS[destination.lower()].format(date, date)
-    r = Renderer(url).html
-    soup = bs(r, "html.parser")
+    r = Renderer(url)
+    soup = bs(r.html(), "html.parser")
     connection_elements = soup.find_all("div", class_="routeSummary")
     for tag in connection_elements:
         departure_time = tag.contents[3].get_text()  # The indexes are kind of magical
@@ -75,20 +107,29 @@ if __name__ == "__main__":
         search_result = "Found connections:"
         for connection in connections:
             search_result += "\nTime: {}\tFree spaces: {}".format(connection.departure_time, connection.free_spaces)
-        Mbox("Search results", search_result)
+        tkiner_mbox(title="Search results", msg=search_result)
     else:
         while True:
             connections = retrieve_connections(
                 date=args.date,
                 destination=args.destination
             )
-            departure_times = []
-            for connection in connections:
-                departure_times.append(connection.departure_time)
+            try:
+                departure_times
+            except:
+                departure_times = None
+            if departure_times is None:  # first run only
+                departure_times = []
+                for connection in connections:
+                    departure_times.append(connection.departure_time)
                 if args.time not in departure_times:
-                    Mbox("Error", "Failed to find the time specified on this day. Double check input")
+                    tkiner_mbox("Error", "Failed to find the time specified on this day. Double check input")
+                    sys.exit(1)
+            for connection in connections:
                 if connection.departure_time == args.time and connection.free_spaces > 0:
-                    Mbox("Found empty space",
-                         "Empty space at {} found. Go to website for reservation".format(args.time))
+                    tkiner_mbox(title="Found empty space",
+                                msg="Empty space at {} found. Go to website for reservation".format(args.time))
                     sys.exit(0)
-            time.sleep(120)
+                else:
+                    logger.info('No free spaces found')
+            time.sleep(60)
